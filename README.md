@@ -1,174 +1,72 @@
-# cryptobot — intraday crypto strategy lab (paper-first)
+# Crypto Strategy Validation Framework
 
-A small, honest framework for building and **validating** intraday crypto
-strategies before any real money is involved. Crypto (Binance/Bybit) · intraday ·
-paper now, live later.
+A Python framework for **honestly** backtesting and validating crypto trading strategies — to find out whether a strategy has a real edge, or just looks good on one lucky window. Most retail backtests lie (they tune on all history, report the in-sample number, and ignore fees). This one is built to catch that, and to surface the rare strategies that actually hold up.
 
-## The one rule that matters
+> **Available for freelance work** — strategy backtesting, validation, and custom trading tools in Python. If you have a strategy you want tested *honestly* before risking money, that's exactly what this is for.
 
-**The walk-forward verdict is the truth; the single-pass backtest is marketing.**
-Anyone can produce a green equity curve by tuning a strategy on past data. This
-repo is built to *catch you doing that to yourself*. If a strategy can't keep a
-positive Sharpe on out-of-sample data after realistic fees and slippage, it does
-not go near capital — paper or real.
+---
 
-This is not a money printer and there is no "winning" bot. The realistic win is
-a disciplined process: validate honestly → paper-trade for weeks → risk-manage
-hard → only ever risk money you can afford to lose.
+## What it found
 
-## Layout
+### ✅ An edge that holds up: funding-rate carry
 
-| File | Role |
+The delta-neutral spot-perp basis trade (long spot, short perpetual, collect funding) tested across 3.5 years of BTC data:
+
+| Metric | Result |
 |---|---|
-| `data.py` | OHLCV via ccxt with caching; `synthetic_ohlcv()` for offline testing |
-| `indicators.py` | Causal indicators (EMA, RSI, ATR, Donchian) — no lookahead |
-| `strategies.py` | Pluggable strategies (`ema_cross`, `rsi_meanrev`, `donchian`) |
-| `backtest.py` | Backtester with fees + slippage, signal shifted +1 bar, honest metrics |
-| `walkforward.py` | Rolling out-of-sample validation + overfitting verdict |
-| `risk.py` | ATR position sizing, daily-loss limit, kill switch |
-| `run_backtest.py` | CLI: backtest + walk-forward |
-| `paper_trader.py` | Phase 2: live loop on exchange **testnet** (deterministic) |
+| Annualised net yield | **+5.9% / year** (after fees) |
+| Collected funding | 85% of intervals |
+| Max drawdown | **−0.41%** |
+
+Small, boring, survivable — what a *real* edge looks like. The framework confirmed it isn't lookahead or leverage: it's a genuine structural premium.
+
+### ❌ Two viral "AI quant" strategies that don't
+
+**A Hidden Markov Model "regime" strategy** (marketed as trading "like a hedge fund"), tested causally — HMM fit on past data only, no lookahead — across 5 coins and 2 years. It beat buy-and-hold on **0 of 5 coins.** Example: on XRP it returned −77.6% while simply holding returned **+119.2%.** Once lookahead bias and leverage were removed, the advertised edge vanished.
+
+**A "Gaussian Channel" strategy** (advertised "7,492% since 2018"). The big numbers were real but misleading — it *underperformed simply holding the coins on 4 of 5 assets.* That "profit" was bull-market beta, not skill.
+
+**The discipline this enforces:** the honest benchmark isn't zero, it's buy-and-hold. A strategy showing +1500% can still be a failure if holding made +2600%. This toolkit always shows that comparison — which is how it separates a real edge (the carry above) from an expensive illusion (the two below).
+
+---
+
+## What it does
+
+- **Realistic backtesting** — fees + slippage on every trade, no lookahead (signals act next bar), full metrics always vs buy-and-hold.
+- **Walk-forward validation** — out-of-sample testing with a blunt verdict: ROBUST / MODERATE / WEAK / OVERFITTED.
+- **Regime stress-testing** — attributes P&L to trend-vs-chop and high-vs-low volatility, so you see *where* an edge lives and where it dies.
+- **Cross-asset generalisation** — runs a strategy across many coins and reports GENERALISES / MIXED / DOES NOT GENERALISE.
+- **Risk management** — ATR position sizing, stop-loss/take-profit engine, daily-loss limit, kill switch, expectancy.
+- **Causal HMM regime detection** — fit on past data only, state inferred by forward-filtering (no lookahead, unlike most HMM demos).
+- **Funding-rate carry** — backtest + live scanner + paper simulator for the delta-neutral basis trade.
+- **Paper trading** — testnet execution loop with risk controls wired in.
 
 ## Quick start
 
-```bash
+\`\`\`bash
 pip install -r requirements.txt
 
-# Works offline, anywhere (no network/exchange needed):
-python run_backtest.py --strategy donchian --synthetic
-
-# Real data (run on your own machine — exchanges must be reachable):
-python run_backtest.py --strategy donchian --symbol BTC/USDT --timeframe 5m --limit 6000
-python run_backtest.py --strategy ema_cross --risk-sizing --taker-bps 6 --slippage-bps 3
-```
-
-Read the metrics in this order: **walk-forward VERDICT → out-of-sample Sharpe →
-net return vs buy & hold → max drawdown.** Ignore win rate until the rest holds.
-
-## Paper trading (Phase 2)
-
-```bash
-cp .env.example .env          # add TESTNET keys only — never real ones
-python paper_trader.py --strategy donchian --symbol BTC/USDT --timeframe 5m   # dry-run
-python paper_trader.py --strategy donchian --live-paper                       # places orders on TESTNET
-```
-
-`paper_trader.py` forces sandbox/testnet mode and defaults to dry-run. The
-execution path is plain Python; no language model places orders.
-
-## Where the LLM / MCP fits
-
-Keep the model **out of the live order loop**. Good uses: researching new
-signal ideas, reviewing strategy code, sanity-checking a walk-forward report,
-summarising market context. The `tradingview-mcp` server is excellent for that
-research layer inside Claude Desktop (install it there separately; it's
-read-only analysis and never executes trades). Wire it to *inform* you, not to
-auto-trade.
-
-## Stress-testing across market regimes
-
-The advice that matters most: a strategy isn't robust because it survives *time*,
-it's robust because it survives *regimes*. Attribute P&L to trend-vs-chop and
-high-vs-low-vol:
-
-```bash
+# offline self-test (no network/keys):
 python run_backtest.py --strategy donchian --synthetic --regimes
-```
 
-If the verdict says "edge is TREND-only and loses in CHOP", that strategy will
-quietly die the moment the market stops trending — exactly the overfitting trap
-to avoid. Curb fee-bleed from overtrading with a minimum hold period:
-
-```bash
-python run_backtest.py --strategy ema_cross --synthetic --min-hold 24
-```
-
-## The generalisation test (most important workflow)
-
-One coin over one window proves nothing. Download breadth, then test whether an
-edge holds across coins:
-
-```bash
-# 1. pull ~2 years of hourly history for several coins (once; then it's cached)
-python download_data.py --coins BTC/USDT ETH/USDT SOL/USDT BNB/USDT XRP/USDT --timeframes 1h --limit 17520
-
-# 2. run one strategy across all of them and read the verdict at the bottom
+# real data + the generalisation test that matters:
+python download_data.py --coins BTC/USDT ETH/USDT SOL/USDT --timeframes 1h --limit 17520
 python compare.py --strategy rsi_meanrev --timeframe 1h
-python compare.py --strategy rsi_meanrev --timeframe 1h --chop-filter   # A/B the filter
-```
 
-`compare.py` ends with GENERALISES / MIXED / DOES NOT GENERALISE. Only the first
-is worth paper-trading — and even then, paper-trade first.
-
-## Risk management: stops + position sizing
-
-Van Tharp's claim — the exit and bet size matter more than the entry — is testable
-here. The stop defines risk; position size is set so every trade risks the same
-fixed % of equity (`--risk`), capped at 1x (no leverage).
-
-```bash
-# breakout (trend) with a 2-ATR stop — the natural pairing:
-python compare.py --strategy donchian --timeframe 1h --stop-atr 2.0 --risk 0.01
-# mean-reversion with a stop — expect it to HURT (stops fight mean-reversion):
-python compare.py --strategy rsi_meanrev --timeframe 1h --stop-atr 2.0
-```
-
-Reality check baked into the design: position sizing cannot flip a negative-
-expectancy signal to positive — it only rescales risk. A stop can change
-expectancy by truncating the loss tail, but only helps strategies whose losers
-genuinely run (trend-following), not mean-reversion.
-
-## Funding-rate carry (the one structural edge)
-
-Long spot + short perpetual of equal size = delta-neutral. You don't predict
-price; you collect the funding longs pay shorts. Real, mechanical — but it's a
-**bull-market premium**: fat when everyone's leveraged long, negative in fear.
-
-```bash
-# what's the carry right now, ranked across coins:
-python funding_scan.py --coins BTC ETH SOL BNB XRP DOGE
-
-# does the HISTORY actually pay after fees? (the test that matters)
+# the edge that held up:
 python funding_backtest.py --symbol BTC/USDT:USDT --exchange binanceusdm --limit 4000
-```
+\`\`\`
 
-The backtest reports annualised NET yield on capital, the % of intervals you
-*paid* (negative funding), and the worst 30-day window. Honest bars: under ~4%/yr
-net it's worse than stablecoin lending for more risk; and it carries real
-liquidation + exchange counterparty risk the backtest can't capture.
+Read metrics in this order: **walk-forward VERDICT → out-of-sample Sharpe → net vs buy-and-hold → max drawdown.** Win rate is the last thing to look at, not the first.
 
-## HMM regime detection (done honestly)
+## Design principle
 
-Hidden Markov Models label hidden market states (bull/crash/chop) and you trade
-only favourable ones. The technique is real — but most demos fit the HMM on the
-WHOLE history then backtest on those labels, which is lookahead and inflates
-results massively. Here the HMM is fit on past data only and the live state is
-inferred by causal forward-filtering. Walk-forward, no leverage:
+Every feature exists to make it *harder* to fool yourself. A strategy is only worth paper-trading if it survives walk-forward, holds across multiple coins, and isn't concentrated in one regime — after realistic costs. That discipline is the difference between finding a real edge and funding an expensive mistake.
 
-```bash
-python hmm_backtest.py --coins BTC/USDT ETH/USDT SOL/USDT --timeframe 1h --states 4 --min-hold 6
-```
+## Tech
 
-Bottom line tells you GENERALISES or "mirage". If an edge only appears with
-lookahead or leverage, it isn't real.
-
-## Honest roadmap
-
-- [x] Causal indicators + backtester with realistic costs
-- [x] Walk-forward validation with overfitting verdict
-- [x] Regime stress-testing (trend/chop, high/low vol) with attribution
-- [x] Smoothed regime filters (no flicker) + overtrading control
-- [x] Multi-coin / multi-year downloader + cross-coin generalisation test
-- [x] Stop-loss / take-profit engine + risk-based position sizing + expectancy
-- [ ] Regime-aware walk-forward (require positive OOS Sharpe in every regime)
-- [ ] Funding-rate / fee modelling for perp futures
-- [ ] Portfolio of pairs + correlation-aware sizing
-- [ ] Logging + paper-trading P&L dashboard
-- [ ] Only after weeks of green paper results: a deliberate, separately-reviewed
-      switch to real capital with hard per-trade and per-day caps
+Python · pandas · numpy · ccxt · hmmlearn · scikit-learn
 
 ## Disclaimer
 
-Educational tooling, not financial advice. Trading carries substantial risk of
-loss. You are responsible for your own decisions and for complying with the laws
-and exchange rules that apply to you.
+Research and educational tooling. Not financial advice. Trading carries substantial risk of loss.
