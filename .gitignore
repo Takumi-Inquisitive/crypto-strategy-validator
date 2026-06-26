@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.cache/
+*.parquet
+.env
+carry_paper_log.csv
